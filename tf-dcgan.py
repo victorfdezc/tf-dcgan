@@ -24,74 +24,21 @@ def log_normal_pdf(sample, mean, logvar, raxis=1):
       axis=raxis)
 '''
 
-# @tf.function
-# def train_step(model, x, optimizer):
-#   """Executes one training step and returns the loss.
-
-#   This function computes the loss and gradients, and uses the latter to
-#   update the model's parameters.
-#   """
-#   with tf.GradientTape() as tape:
-#     loss = compute_loss(model, x)
-#   gradients = tape.gradient(loss, model.trainable_variables)
-#   optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-  
-  
-
-# def plot_latent_images(model, n, digit_size=28):
-#   """Plots n x n digit images decoded from the latent space."""
-
-#   norm = tfp.distributions.Normal(0, 1)
-#   grid_x = norm.quantile(np.linspace(0.05, 0.95, n))
-#   grid_y = norm.quantile(np.linspace(0.05, 0.95, n))
-#   image_width = digit_size*n
-#   image_height = image_width
-#   image = np.zeros((image_height, image_width))
-
-#   for i, yi in enumerate(grid_x):
-#     for j, xi in enumerate(grid_y):
-#       z = np.array([[xi, yi]])
-#       x_decoded = model.sample(z)
-#       digit = tf.reshape(x_decoded[0], (digit_size, digit_size))
-#       image[i * digit_size: (i + 1) * digit_size,
-#             j * digit_size: (j + 1) * digit_size] = digit.numpy()
-
-#   plt.figure(figsize=(10, 10))
-#   plt.imshow(image, cmap='Greys_r')
-#   plt.axis('Off')
-#   # plt.show()
-
-
-# def inference_image(model, image):
-#   reshaped_image = tf.expand_dims(image, axis=0)
-#   mean, logvar = model.encode(reshaped_image)
-#   z = model.reparameterize(mean, logvar)
-#   predictions = model.sample(z)
-#   return predictions[0, :, :, :]
-
-def save_image(image,img_name):
-  fig = plt.figure()
-  plt.imshow(image)
-  plt.axis('off')
-  plt.savefig(img_name + '.png')
-  
-
-# def split_frames(frames, num_images_set1):
-#     set1 = frames[:num_images_set1]
-#     set2 = frames[num_images_set1:]
-#     return set1, set2
 
 
 ############################################################################################################
 # MAIN SCRIPT a finalizar usando CVAE como ejemplo
 ############################################################################################################
-batch_size = 32
+batch_size = 2
 epochs = 100
 # set the dimensionality of the latent space to a plane for visualization later
-latent_dim = 100
-num_examples_to_generate = 1
+latent_dim = 320
+num_examples_to_generate = 4
 img_shape = 200
 img_channels = 3
+
+load_model = True
+start_epoch = 390
 
 
 # # keeping the random vector constant for generation (prediction) so
@@ -118,10 +65,17 @@ print("Shape of test images:", np.shape(test_images))
 
 # Batch and shuffle the data
 train_dataset = tf.data.Dataset.from_tensor_slices(train_images).shuffle(train_size).batch(batch_size)
+print("MAXIMUM TRAIN VALUE: " + str(np.max(train_images)))
+print("MINIMMUM TRAIN VALUE: " + str(np.min(train_images)))
 
+generator_checkpoint_path = "training_1/cp-generator-{epoch:04d}.weights.h5"
+discriminator_checkpoint_path = "training_1/cp-discriminator-{epoch:04d}.weights.h5"
 
 model = DCGAN(latent_dim, img_shape, img_channels)
-noise = tf.random.normal([1, 100])
+if load_model:
+  model.generator.load_weights(generator_checkpoint_path.format(epoch=start_epoch))
+  model.discriminator.load_weights(discriminator_checkpoint_path.format(epoch=start_epoch))
+noise = tf.random.normal([1, latent_dim])
 generated_image = model.generator(noise, training=False)
 
 save_image(generated_image[0], "test")
@@ -132,96 +86,49 @@ print (decision)
 # to visualize progress in the animated GIF)
 seed = tf.random.normal([num_examples_to_generate, latent_dim])
 
-generator_checkpoint_path = "training_1/cp-generator-{epoch:04d}.weights.h5"
-discriminator_checkpoint_path = "training_1/cp-discriminator-{epoch:04d}.weights.h5"
-
-def generate_and_save_images(model, epoch, test_input):
-  # Notice `training` is set to False.
-  # This is so all layers run in inference mode (batchnorm).
-  predictions = model(test_input, training=False)
-
-  fig = plt.figure(figsize=(4, 4))
-
-  for i in range(predictions.shape[0]):
-    plt.subplot(int(np.sqrt(predictions.shape[0])), int(np.sqrt(predictions.shape[0])), i + 1)
-    plt.imshow(predictions[i, :, :, :])
-    plt.axis('off')
-
-  plt.savefig('data_out/image_at_epoch_{:04d}.png'.format(epoch))
-  # plt.show()
-
-
-@tf.function
-def train_step(images):
-    noise = tf.random.normal([batch_size, latent_dim])
-
-    with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-      generated_images = model.generator(noise, training=True)
-
-      real_output = model.discriminator(images, training=True)
-      fake_output = model.discriminator(generated_images, training=True)
-
-      gen_loss = model.generator_loss(fake_output)
-      disc_loss = model.discriminator_loss(real_output, fake_output)
-
-    gradients_of_generator = gen_tape.gradient(gen_loss, model.generator.trainable_variables)
-    gradients_of_discriminator = disc_tape.gradient(disc_loss, model.discriminator.trainable_variables)
-
-    model.generator_optimizer.apply_gradients(zip(gradients_of_generator, model.generator.trainable_variables))
-    model.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, model.discriminator.trainable_variables))
-
 
 def train(dataset, epochs):
-  for epoch in range(epochs):
+  for epoch in range(start_epoch, epochs+start_epoch):
     start = time.time()
 
+    mean_gen_loss = 0
+    mean_disc_loss = 0
     for image_batch in dataset:
-      train_step(image_batch)
+      gen_loss,disc_loss, generated_images = model.train_step(image_batch, batch_size)
+      # print("MAXIMUM TRAIN VALUE: " + str(np.max(image_batch.numpy())))
+      # print("MINIMMUM TRAIN VALUE: " + str(np.min(image_batch.numpy())))
+
+      # print("MAXIMUM TRAIN VALUE: " + str(np.max(generated_images.numpy())))
+      # print("MINIMMUM TRAIN VALUE: " + str(np.min(generated_images.numpy())))
+      mean_gen_loss += gen_loss
+      mean_disc_loss += disc_loss
+    
+    mean_gen_loss = mean_gen_loss.numpy()
+    mean_disc_loss = mean_disc_loss.numpy()
+    print("Generator LOSS: " + str(mean_gen_loss/len(dataset)))
+    print("Discriminator LOSS: " + str(mean_disc_loss/len(dataset)))
 
     # Produce images for the GIF as you go
     display.clear_output(wait=True)
-    generate_and_save_images(model.generator,
-                             epoch + 1,
-                             seed)
-
-
+    save_image_matrix(model.generate_images(seed), img_path ='data_out/image_at_epoch_{:04d}'.format(epoch))
 
     # Save the model every 15 epochs
-    if (epoch + 1) % 15 == 0:
+    if (epoch) % 15 == 0:
         model.generator.save_weights(generator_checkpoint_path.format(epoch=epoch))
         model.discriminator.save_weights(discriminator_checkpoint_path.format(epoch=epoch))
 
-    print ('Time for epoch {} is {} sec'.format(epoch + 1, time.time()-start))
+    print ('Time for epoch {} is {} sec'.format(epoch, time.time()-start))
+
+
+  model.generator.save_weights(generator_checkpoint_path.format(epoch=epochs))
+  model.discriminator.save_weights(discriminator_checkpoint_path.format(epoch=epochs))
 
   # Generate after the final epoch
-  display.clear_output(wait=True)
-  generate_and_save_images(generator,
-                           epochs,
-                           seed)
+  # save_image_matrix(model.generate_images(seed), img_path ='data_out/image_at_epoch_{:04d}'.format(start_epoch+epochs))
 
 
+# model.generator.load_weights(generator_checkpoint_path.format(epoch=240))
+# model.discriminator.load_weights(discriminator_checkpoint_path.format(epoch=240))
 train(train_dataset, epochs)
-
-# Display a single image using the epoch number
-def display_image(epoch_no):
-  return PIL.Image.open('image_at_epoch_{:04d}.png'.format(epoch_no))
-
-display_image(epochs)
-
-
-anim_file = 'data_out/dcgan.gif'
-with imageio.get_writer(anim_file, mode='I') as writer:
-  filenames = glob.glob('data_out/image*.png')
-  filenames = sorted(filenames)
-  for filename in filenames:
-    image = imageio.imread(filename)
-    writer.append_data(image)
-  image = imageio.imread(filename)
-  writer.append_data(image)
-  
-embed.embed_file(anim_file)
-
-# Make some predictions
-save_img(inference_image(model, test_sample[0]),"test_sample_predicted_trained")
-save_img(inference_image(model, random_images[0]),"chino_predicted_trained")
-save_img(inference_image(model, random_images[1]),"test_image_predicted_trained")
+save_gif('data_out/dcgan', re_images_name='data_out/image*.png')
+save_mp4('data_out/dcgan', re_images_name='data_out/image*.png')

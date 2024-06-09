@@ -1,5 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras import layers
+from tf_utils.process_images import clip_0_1
 
 
 class DCGAN():
@@ -37,10 +38,20 @@ class DCGAN():
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
 
-    model.add(layers.Conv2DTranspose(64, (5, 5), strides=(2, 2), padding='same', use_bias=False))
-    assert model.output_shape == (None, int(self.image_shape/2), int(self.image_shape/2), 64)
+    model.add(layers.Conv2DTranspose(64, (5, 5), strides=(1, 1), padding='same', use_bias=False))
+    assert model.output_shape == (None, int(self.image_shape/4), int(self.image_shape/4), 64)
     model.add(layers.BatchNormalization())
     model.add(layers.LeakyReLU())
+
+    model.add(layers.Conv2DTranspose(32, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    assert model.output_shape == (None, int(self.image_shape/2), int(self.image_shape/2), 32)
+    model.add(layers.BatchNormalization())
+    model.add(layers.LeakyReLU())
+
+    # model.add(layers.Conv2DTranspose(8, (5, 5), strides=(2, 2), padding='same', use_bias=False))
+    # assert model.output_shape == (None, int(self.image_shape/2), int(self.image_shape/2), 8)
+    # model.add(layers.BatchNormalization())
+    # model.add(layers.LeakyReLU())
 
     model.add(layers.Conv2DTranspose(self.image_channels, (5, 5), strides=(2, 2), padding='same', use_bias=False, activation='tanh'))
     assert model.output_shape == (None, self.image_shape, self.image_shape, self.image_channels)
@@ -49,6 +60,12 @@ class DCGAN():
 
   def generator_loss(self, fake_output):
     return self.cross_entropy(tf.ones_like(fake_output), fake_output)
+
+  def generate_images(self, input=None):
+    if input is None:
+      num_images_to_generate = 1
+      input = tf.random.normal([num_images_to_generate, self.latent_dim])
+    return clip_0_1(self.generator(input, training=False))
 
   def make_discriminator_model(self):
     model = tf.keras.Sequential()
@@ -95,21 +112,24 @@ class DCGAN():
 
   # Notice the use of `tf.function`
   # This annotation causes the function to be "compiled".
-  # @tf.function
-  # def train_step(images):
-  #     noise = tf.random.normal([BATCH_SIZE, noise_dim])
+  @tf.function
+  def train_step(self, images, batch_size):
+      noise = tf.random.normal([batch_size, self.latent_dim])
 
-  #     with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-  #       generated_images = self.generator(noise, training=True)
+      with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
+        generated_images = self.generator(noise, training=True)
+        generated_images = clip_0_1(generated_images) #tanh output, clipping is needed
 
-  #       real_output = self.discriminator(images, training=True)
-  #       fake_output = self.discriminator(generated_images, training=True)
+        real_output = self.discriminator(images, training=True)
+        fake_output = self.discriminator(generated_images, training=True)
 
-  #       gen_loss = self.generator_loss(fake_output)
-  #       disc_loss = discriminator_loss(real_output, fake_output)
+        gen_loss = self.generator_loss(fake_output)
+        disc_loss = self.discriminator_loss(real_output, fake_output)
 
-  #     gradients_of_generator = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
-  #     gradients_of_discriminator = disc_tape.gradient(disc_loss, self.discriminator.trainable_variables)
+      gradients_of_generator = gen_tape.gradient(gen_loss, self.generator.trainable_variables)
+      gradients_of_discriminator = disc_tape.gradient(disc_loss, self.discriminator.trainable_variables)
 
-  #     generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
-  #     discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+      self.generator_optimizer.apply_gradients(zip(gradients_of_generator, self.generator.trainable_variables))
+      self.discriminator_optimizer.apply_gradients(zip(gradients_of_discriminator, self.discriminator.trainable_variables))
+
+      return gen_loss, disc_loss, generated_images
